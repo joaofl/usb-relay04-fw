@@ -116,11 +116,23 @@ The default device is `/dev/ttyUSB0`.
 | `0x8000`-`0x87FF` | bootloader ([firmware/boot.c](firmware/boot.c)) |
 | `0x8800`-`0x9FFF` | relay firmware ([firmware/relay04.c](firmware/relay04.c)) |
 
-The bootloader starts the relay firmware unless the firmware asked for an
-update (`boot`) or there is no firmware yet. Interrupts go through the
-bootloader's vector table, which forwards each one to the firmware's table at
-`0x8800`. In the bootloader the card answers `version`, `read <aaaa>`,
-`write <aaaa> <64 bytes hex>` and `run`, at the same baud rate.
+The bootloader prints a `BOOT` line on every start. After a power-up or reset
+it starts the relay firmware at once, so the card is ready without delay:
+
+```
+BOOT relay04-boot 1.1, starting application
+READY relay04 1.2.0 icse012a 4 reset=power
+```
+
+It stays in the bootloader only after the firmware's `boot` command, or when
+there is no firmware yet. There, it answers `version`, `read <aaaa>`,
+`write <aaaa> <64 bytes hex>` and `run`, at the same baud rate. If 3 s pass
+without a command and firmware is present, it starts the firmware by itself
+(`BOOT timeout, starting application`), so a stray or abandoned `boot` never
+leaves the card stuck. Without firmware it waits for as long as it takes.
+
+Interrupts go through the bootloader's vector table, which forwards each one
+to the firmware's table at `0x8800`.
 
 ## Download
 
@@ -252,9 +264,11 @@ make update RELAY=/dev/ttyUSB0
 ```
 
 `relayctl.py update` sends `boot`, writes the firmware block by block, writes
-the block holding the reset vector last, and starts the new firmware. An
-interrupted update leaves the card in the bootloader, where the next `update`
-can finish it. The bootloader itself is only written over SWIM.
+the block holding the reset vector last, and starts the new firmware. The
+first write clears the reset vector, so from then on there is no firmware and
+the 3 s timeout does not apply: an interrupted update leaves the card in the
+bootloader, where the next `update` can finish it. The bootloader itself is
+only written over SWIM.
 
 ## License
 

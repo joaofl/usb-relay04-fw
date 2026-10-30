@@ -56,6 +56,7 @@
 #define TIM4_CR1  REG(0x5340)
 #define TIM4_IER  REG(0x5343)
 #define TIM4_SR   REG(0x5344)
+#define TIM4_EGR  REG(0x5345)
 #define TIM4_PSCR REG(0x5347)
 #define TIM4_ARR  REG(0x5348)
 

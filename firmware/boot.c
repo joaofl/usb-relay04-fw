@@ -1,11 +1,13 @@
-/* USB-RELAY04 bootloader, 0x8000-0x87FF. Starts the application at APP_START unless the
- * application jumped here with BOOT_REQUEST, or has no reset vector yet.
+/* USB-RELAY04 bootloader, 0x8000-0x87FF. Prints a BOOT line, then starts the application at
+ * APP_START unless the application jumped here with BOOT_REQUEST or there is none yet.
+ * When it stays, it starts the application after TIMEOUT_MS without a command, if there is one.
  * Commands: version, write <aaaa> <64 bytes hex>, read <aaaa>, run. */
 
 #include "stm8s.h"
 
-#define VERSION "1.0"
+#define VERSION "1.1"
 #define BLOCK 64
+#define TIMEOUT_MS 3000
 
 /* Interrupts run through this vector table: forward each IRQ to the application's entry. */
 #define FWD(n, addr) void fwd##n(void) __interrupt(n) __naked { __asm__("jp " #addr); }
@@ -43,17 +45,41 @@ static void reply(const char *s)
     puts_("\r\n");
 }
 
-static void gets_(void)
+static uint8_t app_present(void)
+{
+    return *(volatile uint8_t *)APP_START == 0x82;
+}
+
+static void start_app(void)
+{
+    while (!(UART1_SR & SR_TC))
+        KICK();
+    UART1_CR2 = 0;
+    TIM4_CR1 = 0;
+    TIM4_SR = 0;
+    START_APP();
+}
+
+/* Reads one line into line; returns 0 after TIMEOUT_MS of silence if there is an application. */
+static uint8_t gets_(void)
 {
     uint8_t n = 0;
+    uint16_t idle_ms = 0;
     for (;;) {
-        while (!(UART1_SR & SR_RXNE))
+        while (!(UART1_SR & SR_RXNE)) {
             KICK();
+            if (TIM4_SR & 0x01) {
+                TIM4_SR = 0;
+                if (++idle_ms >= TIMEOUT_MS && app_present())
+                    return 0;
+            }
+        }
+        idle_ms = 0;
         char c = UART1_DR;
         if (c == '\r' || c == '\n') {
             if (n) {
                 line[n] = 0;
-                return;
+                return 1;
             }
         } else if (n < sizeof(line) - 1) {
             line[n++] = c;
@@ -160,15 +186,30 @@ static void cmd_read(void)
 
 void main(void)
 {
-    if (TIM4_ARR != BOOT_REQUEST && *(volatile uint8_t *)APP_START == 0x82)
-        START_APP();
-    TIM4_ARR = 0xFF;
+    uint8_t requested = TIM4_ARR == BOOT_REQUEST;
 
     clock_and_uart_init(CR2_TEN | CR2_REN);
-    reply("BOOT relay04-boot " VERSION);
+    if (!requested && app_present()) {
+        reply("BOOT relay04-boot " VERSION ", starting application");
+        start_app();
+    }
+
+    TIM4_PSCR = 7; /* 125 kHz */
+    TIM4_ARR = 124; /* 1 ms */
+    TIM4_EGR = 0x01;
+    TIM4_SR = 0;
+    TIM4_CR1 = 0x01;
+
+    if (app_present())
+        reply("BOOT relay04-boot " VERSION ", application starts after 3 s without a command");
+    else
+        reply("BOOT relay04-boot " VERSION ", no application");
 
     for (;;) {
-        gets_();
+        if (!gets_()) {
+            reply("BOOT timeout, starting application");
+            start_app();
+        }
         if (starts(line, "version"))
             reply("OK relay04-boot " VERSION);
         else if (starts(line, "write "))
@@ -176,15 +217,12 @@ void main(void)
         else if (starts(line, "read "))
             cmd_read();
         else if (starts(line, "run")) {
-            if (*(volatile uint8_t *)APP_START != 0x82) {
+            if (!app_present()) {
                 reply("ERR no application");
                 continue;
             }
             reply("OK");
-            while (!(UART1_SR & SR_TC))
-                KICK();
-            UART1_CR2 = 0;
-            START_APP();
+            start_app();
         } else
             reply("ERR commands: version, write <aaaa> <hex>, read <aaaa>, run");
     }
