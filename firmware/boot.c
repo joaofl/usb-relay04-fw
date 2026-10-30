@@ -3,10 +3,9 @@
  * When it stays, it starts the application after TIMEOUT_MS without a command, if there is one.
  * Commands: version, write <aaaa> <64 bytes hex>, read <aaaa>, run. */
 
-#include "stm8s.h"
+#include "iap.h"
 
-#define VERSION "1.1"
-#define BLOCK 64
+#define VERSION "1.2"
 #define TIMEOUT_MS 3000
 
 /* Interrupts run through this vector table: forward each IRQ to the application's entry. */
@@ -87,34 +86,11 @@ static uint8_t gets_(void)
     }
 }
 
-static int8_t nibble(char c)
-{
-    if (c >= '0' && c <= '9')
-        return c - '0';
-    c |= 0x20;
-    if (c >= 'a' && c <= 'f')
-        return c - 'a' + 10;
-    return -1;
-}
-
-/* Parses 2*n hex digits into out; returns the position after them, or 0 on bad input. */
-static const char *hex(const char *p, uint8_t *out, uint8_t n)
-{
-    while (n--) {
-        int8_t hi = nibble(p[0]), lo = hi < 0 ? -1 : nibble(p[1]);
-        if (lo < 0)
-            return 0;
-        *out++ = (uint8_t)(hi << 4 | lo);
-        p += 2;
-    }
-    return p;
-}
-
 /* "<aaaa>" at p: a block-aligned application address; returns 0 if invalid. */
 static uint16_t block_addr(const char *p, const char **end)
 {
     uint8_t a[2];
-    *end = hex(p, a, 2);
+    *end = hex_decode(p, a, 2);
     if (!*end)
         return 0;
     uint16_t addr = (uint16_t)(a[0] << 8 | a[1]);
@@ -131,40 +107,15 @@ static uint8_t starts(const char *s, const char *prefix)
     return 1;
 }
 
-/* Word programming may run from flash: the CPU stalls until each word is written. */
-static uint8_t write_block(uint16_t addr)
-{
-    volatile uint8_t *p = (volatile uint8_t *)addr;
-    FLASH_PUKR = 0x56;
-    FLASH_PUKR = 0xAE;
-    while (!(FLASH_IAPSR & IAPSR_PUL))
-        KICK();
-    for (uint8_t i = 0; i < BLOCK; i += 4) {
-        FLASH_CR2 = CR2_WPRG;
-        FLASH_NCR2 = (uint8_t)~CR2_WPRG;
-        p[i] = block[i];
-        p[i + 1] = block[i + 1];
-        p[i + 2] = block[i + 2];
-        p[i + 3] = block[i + 3];
-        while (!(FLASH_IAPSR & (IAPSR_EOP | IAPSR_WR_PG_DIS)))
-            KICK();
-    }
-    FLASH_IAPSR &= (uint8_t)~IAPSR_PUL;
-    for (uint8_t i = 0; i < BLOCK; i++)
-        if (p[i] != block[i])
-            return 0;
-    return 1;
-}
-
 static void cmd_write(void)
 {
     const char *p;
     uint16_t addr = block_addr(line + 6, &p);
-    if (!addr || *p != ' ' || !(p = hex(p + 1, block, BLOCK)) || *p) {
+    if (!addr || *p != ' ' || !(p = hex_decode(p + 1, block, BLOCK)) || *p) {
         reply("ERR usage: write <aaaa> <64 bytes hex>");
         return;
     }
-    reply(write_block(addr) ? "OK" : "ERR verify");
+    reply(flash_write_block(addr, block) ? "OK" : "ERR verify");
 }
 
 static void cmd_read(void)

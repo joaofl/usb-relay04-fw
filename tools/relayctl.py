@@ -4,13 +4,14 @@
     relayctl.py [-d DEV] status | version | on 1 3 | off all | set 1010
     relayctl.py [-d DEV] pulse 1 10s [--wait]
     relayctl.py [-d DEV] update build/icse012a/relay04.ihx
+    relayctl.py [-d DEV] update-boot build/icse012a/boot.ihx
 """
 
 import argparse
 import sys
 import time
 
-APP_START, FLASH_END, BLOCK = 0x8800, 0xA000, 64
+BOOT_START, APP_START, FLASH_END, BLOCK = 0x8000, 0x8800, 0xA000, 64
 BAUD = 115200
 
 
@@ -98,7 +99,8 @@ def cmd_update(relay, path):
         deadline = time.monotonic() + 3
         while not relay.line(timeout=1.0).startswith("BOOT"):
             if time.monotonic() > deadline:
-                sys.exit("no BOOT banner after the boot command")
+                sys.exit("no BOOT banner after the boot command; if an update-boot was "
+                         "interrupted, run update-boot again first")
         reply = relay.cmd("version")
     print(reply)
 
@@ -115,6 +117,57 @@ def cmd_update(relay, path):
         print(f"\r{n}/{len(blocks) + 1} blocks", end="", flush=True)
     write(APP_START, bytes(mem.get(APP_START + i, 0) for i in range(BLOCK)))
     print(f"\r{len(blocks) + 1}/{len(blocks) + 1} blocks")
+    print(relay.cmd("run"))
+    ready = relay.line(timeout=2.0)
+    print(ready)
+    return 0 if ready.startswith("READY") else 1
+
+
+def cmd_update_boot(relay, path):
+    """Rewrite the bootloader from the running firmware. Order: firmware vectors over the
+    bootloader's (bbridge), then the bootloader code, then its vector table. Every word is
+    written whole, so after an interruption the card still starts, at worst straight into
+    the firmware, and update-boot can be run again."""
+    mem = load_ihex(path)
+    bad = [a for a in mem if not BOOT_START <= a < APP_START]
+    if bad:
+        sys.exit(f"{path}: data outside 0x{BOOT_START:04x}-0x{APP_START - 1:04x} (first 0x{min(bad):04x})")
+    if mem.get(BOOT_START) != 0x82:
+        sys.exit(f"{path}: no reset vector at 0x{BOOT_START:04x}; is it a bootloader image?")
+
+    reply = relay.cmd("version")
+    if reply.startswith("OK relay04-boot"):
+        relay.cmd("run")
+        relay.line(timeout=2.0)
+        reply = relay.cmd("version")
+    print(reply)
+
+    def run(text, what):
+        reply = relay.cmd(text, timeout=3)
+        if reply != "OK":
+            hint = "; the firmware needs 1.3.0 or newer, run update first" if "unknown" in reply else ""
+            sys.exit(f"{what}: {reply}{hint}")
+
+    def block(addr):
+        return bytes(mem.get(addr + i, 0) for i in range(BLOCK))
+
+    run("bbridge", "bridge")
+    code = range(BOOT_START + 2 * BLOCK, APP_START, BLOCK)
+    total = len(code) + 2
+    for n, addr in enumerate(code, 1):
+        run(f"bwrite {addr:04x} {block(addr).hex()}", f"0x{addr:04x}")
+        print(f"\r{n}/{total} blocks", end="", flush=True)
+    run(f"bwrite {BOOT_START + BLOCK:04x} {block(BOOT_START + BLOCK).hex()}", "vectors 16-31")
+    run(f"bwrite {BOOT_START:04x} {block(BOOT_START).hex()}", "vectors 0-15")
+    print(f"\r{total}/{total} blocks")
+
+    relay.port.write(b"boot\r\n")
+    deadline, banner = time.monotonic() + 3, ""
+    while not banner.startswith("BOOT") and time.monotonic() < deadline:
+        banner = relay.line(timeout=1.0)
+    print(banner or "no BOOT banner from the new bootloader")
+    if not banner.startswith("BOOT"):
+        return 1
     print(relay.cmd("run"))
     ready = relay.line(timeout=2.0)
     print(ready)
@@ -145,6 +198,8 @@ def main():
     relay = Relay(a.device)
     if a.command == "update":
         return cmd_update(relay, a.args[0])
+    if a.command == "update-boot":
+        return cmd_update_boot(relay, a.args[0])
     text = " ".join([a.command] + a.args)
     if a.command in ("h", "help", "?"):
         body = []

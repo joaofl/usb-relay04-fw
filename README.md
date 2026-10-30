@@ -74,9 +74,10 @@ relay, relay 1 first, `1` = on. The examples are for a 4-relay board.
 | `set 0101` | `OK 0101`, sets all relays at once |
 | `pulse 1 10s`, `pulse 2 4 1500ms` | `OK 1000`; when each relay goes off again: `DONE 1 0000` |
 | `status` | `OK 1000 t1=9862 up=14 reset=power` |
-| `version` | `OK relay04 1.2.0 icse012a 4`: firmware version, board, number of relays |
+| `version` | `OK relay04 1.3.0 icse012a 4`: firmware version, board, number of relays |
 | `h`, `help`, `?` | the commands with short examples, then `OK` |
 | `boot` | `OK boot`, switches all relays off and starts the bootloader |
+| `bbridge`, `bwrite <aaaa> <hex>` | rewrite the bootloader, used by `relayctl.py update-boot` |
 
 - `t<n>=` is the time left on a running pulse, in ms. `up=` is seconds since
   start. `reset=` is why the chip last started: `power` (power-on or the reset
@@ -84,7 +85,7 @@ relay, relay 1 first, `1` = on. The examples are for a 4-relay board.
 - Pulses run up to 24 h. `on`, `off` and `set` cancel a pulse on the relays
   they touch.
 - At start all relays are off, and the card prints
-  `READY relay04 1.2.0 icse012a 4 reset=<cause>`.
+  `READY relay04 1.3.0 icse012a 4 reset=<cause>`.
 - The card echoes what you type, so a serial terminal (`tio`, `picocom`,
   `screen`) works without local echo. Backspace deletes, Ctrl-C drops the
   line. A `DONE` notice that arrives mid-line is printed on its own line, and
@@ -120,8 +121,8 @@ The bootloader prints a `BOOT` line on every start. After a power-up or reset
 it starts the relay firmware at once, so the card is ready without delay:
 
 ```
-BOOT relay04-boot 1.1, starting application
-READY relay04 1.2.0 icse012a 4 reset=power
+BOOT relay04-boot 1.2, starting application
+READY relay04 1.3.0 icse012a 4 reset=power
 ```
 
 It stays in the bootloader only after the firmware's `boot` command, or when
@@ -144,6 +145,7 @@ prebuilt files for every board:
 | `relay04-<version>-<board>-full.ihx` | bootloader + firmware, first install over SWIM |
 | `relay04-<version>-<board>.ihx` | firmware only, updates over USB |
 | `relaytest-<version>-<board>.ihx` | wiring test, over SWIM |
+| `relay04-<version>-boot.ihx` | bootloader only, updates over USB (same for every board) |
 | `relayctl.py` | host tool, needs only `pyserial` |
 | `SHA256SUMS` | checksums of the files above |
 
@@ -151,6 +153,7 @@ A card already running this firmware updates with just the release files:
 
 ```sh
 python3 relayctl.py -d /dev/ttyUSB0 update relay04-<version>-icse012a.ihx
+python3 relayctl.py -d /dev/ttyUSB0 update-boot relay04-<version>-boot.ihx   # when the bootloader changed
 ```
 
 ## Build
@@ -187,13 +190,14 @@ Pushing a tag `v<version>` also publishes a GitHub release with those files.
 The tag must match `VERSION` in [firmware/relay04.c](firmware/relay04.c):
 
 ```sh
-make -s version      # 1.2.0
-git tag v1.2.0 && git push origin v1.2.0
+make -s version      # 1.3.0
+git tag v1.3.0 && git push origin v1.3.0
 ```
 
 ## First install over SWIM
 
-Needs a SWIM programmer once per card. This repository uses a Raspberry Pi
+Needs a SWIM programmer once per card. After that, both the firmware and the
+bootloader update over USB. This repository uses a Raspberry Pi
 Debug Probe running [rp2040swim](https://github.com/ARDev1161/rp2040swim)
 v0.1.0, included as the submodule `tools/rp2040swim`:
 
@@ -267,8 +271,30 @@ make update RELAY=/dev/ttyUSB0
 the block holding the reset vector last, and starts the new firmware. The
 first write clears the reset vector, so from then on there is no firmware and
 the 3 s timeout does not apply: an interrupted update leaves the card in the
-bootloader, where the next `update` can finish it. The bootloader itself is
-only written over SWIM.
+bootloader, where the next `update` can finish it.
+
+### Bootloader
+
+```sh
+make update-boot RELAY=/dev/ttyUSB0
+```
+
+`relayctl.py update-boot` rewrites the bootloader from the running firmware
+(1.3.0 or newer; update the firmware first). It takes about 3 s:
+
+1. `bbridge` copies the firmware's vector table over the bootloader's, so
+   reset and interrupts go straight to the firmware.
+2. `bwrite` writes the new bootloader code, then its vector table, the block
+   with the reset vector last. Flash is written one 4-byte word at a time, last
+   word first, so a vector is always either old or new.
+3. `boot` starts the new bootloader, which prints its `BOOT` line, and `run`
+   returns to the firmware.
+
+If it is interrupted, the card still starts, straight into the firmware, and
+`update-boot` can be run again. Until then `update` stops with a hint, since
+there is no bootloader to update the firmware with. The card is bricked only
+if the firmware itself is broken while the bootloader is half written, which
+the order above never does.
 
 ## License
 

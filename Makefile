@@ -16,7 +16,8 @@ boards:
 version:
 	@echo $(VERSION)
 
-# Release files for every board: relay04-<version>-<board>{,-full}.ihx, relaytest, relayctl.py, SHA256SUMS.
+# Release files: per board relay04-<version>-<board>{,-full}.ihx and relaytest; the bootloader
+# relay04-<version>-boot.ihx (same for every board); relayctl.py; SHA256SUMS.
 dist:
 	rm -rf dist && mkdir -p dist
 	for b in $(BOARDS); do \
@@ -25,6 +26,7 @@ dist:
 		cp build/$$b/relay04-full.ihx dist/relay04-$(VERSION)-$$b-full.ihx; \
 		cp build/$$b/relaytest.ihx dist/relaytest-$(VERSION)-$$b.ihx; \
 	done
+	cp build/$(BOARD)/boot.ihx dist/relay04-$(VERSION)-boot.ihx
 	cp tools/relayctl.py dist/
 	cd dist && sha256sum * > SHA256SUMS
 
@@ -55,7 +57,10 @@ swim-flash-relaytest: $(B)/relaytest.ihx
 update: $(B)/relay04.ihx
 	python3 tools/relayctl.py -d $(RELAY) update $<
 
+update-boot: $(B)/boot.ihx
+	python3 tools/relayctl.py -d $(RELAY) update-boot $<
+
 clean:
 	rm -rf build dist
 
-.PHONY: all boards version dist swim-flash swim-flash-relaytest update clean
+.PHONY: all boards version dist swim-flash swim-flash-relaytest update update-boot clean

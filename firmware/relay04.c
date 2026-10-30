@@ -6,20 +6,24 @@
  *   status               "OK <bits> [t<n>=<ms left>] up=<s> reset=<cause>"
  *   version              "OK relay04 <version> <board> <relays>"
  *   boot                 restarts into the bootloader for a firmware update
+ *   bbridge              copies this firmware's vector table over the bootloader's (0x8000-0x807F)
+ *   bwrite <aaaa> <hex>  writes one 64-byte bootloader block; relayctl.py update-boot picks a safe order
  *   h, help, ?           command list with examples, then "OK"
  * Prints "READY relay04 <version> <board> <relays> reset=<cause>" at start; all relays start off.
  * Input is echoed like a terminal: replies and notices start on a line of their own. */
 
 #include "board.h"
+#include "iap.h"
 
-#define VERSION "1.2.0"
+#define VERSION "1.3.0"
 #define MAX_PULSE_MS 86400000UL
 
 static volatile uint32_t ticks;
 static volatile char rx[64];
 static volatile uint8_t rx_head, rx_tail;
 
-static char line[48];
+static char line[150];
+static uint8_t blk[BLOCK];
 static uint8_t line_len;
 static uint8_t after_cr;
 static uint8_t state;     /* bit n = relay n+1 on */
@@ -237,6 +241,36 @@ static void cmd_set(const char *bits)
     error("usage: set <one 0|1 per relay, relay 1 first>");
 }
 
+static void cmd_bwrite(const char *args)
+{
+    uint8_t a[2];
+    const char *p = hex_decode(args, a, 2);
+    uint16_t addr = p ? (uint16_t)(a[0] << 8 | a[1]) : 1;
+    if (!p || *p != ' ' || addr % BLOCK || addr < 0x8000 || addr >= APP_START
+        || !(p = hex_decode(p + 1, blk, BLOCK)) || *p) {
+        error("usage: bwrite <aaaa> <64 bytes hex>, aaaa 8000-87c0");
+        return;
+    }
+    if (flash_write_block(addr, blk))
+        puts_("OK\r\n");
+    else
+        error("verify");
+}
+
+/* With the firmware's own vectors at 0x8000, reset and interrupts no longer use bootloader code. */
+static void cmd_bbridge(void)
+{
+    for (uint8_t b = 0; b < 2; b++) {
+        for (uint8_t i = 0; i < BLOCK; i++)
+            blk[i] = ((const uint8_t *)APP_START)[b * BLOCK + i];
+        if (!flash_write_block(0x8000 + b * BLOCK, blk)) {
+            error("verify");
+            return;
+        }
+    }
+    puts_("OK\r\n");
+}
+
 static void handle(char *cmd)
 {
     char *args = cmd;
@@ -266,6 +300,10 @@ static void handle(char *cmd)
         cmd_pulse(args);
     } else if (equal(cmd, "status")) {
         cmd_status();
+    } else if (equal(cmd, "bwrite")) {
+        cmd_bwrite(args);
+    } else if (equal(cmd, "bbridge")) {
+        cmd_bbridge();
     } else if (equal(cmd, "h") || equal(cmd, "help") || equal(cmd, "?")) {
         cmd_help();
     } else if (equal(cmd, "version")) {
