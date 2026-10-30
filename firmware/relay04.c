@@ -1,15 +1,16 @@
-/* USB-RELAY04 relay firmware, from APP_START. Lines at 115200 8N1, replies "OK ..." or "ERR ...":
+/* Relay firmware, from APP_START. Lines at 115200 8N1, replies "OK ..." or "ERR ...".
+ * <bits> is one character per relay, relay 1 first, 1 = on:
  *   on|off <relays>      relays: "all" or numbers, e.g. "1 3" or "13"
- *   set <bbbb>           all four at once, relay 1 first
- *   pulse <relays> <t>   on for t (ms, or "10s"), then off; sends "DONE <n> <bbbb>"
- *   status               "OK <bbbb> [t<n>=<ms left>] up=<s> reset=<cause>"
- *   version, boot        boot restarts into the bootloader for a firmware update
- * Prints "READY relay04 <version> reset=<cause>" at start; all relays start off. */
+ *   set <bits>           all relays at once
+ *   pulse <relays> <t>   on for t (ms, or "10s"), then off; sends "DONE <n> <bits>"
+ *   status               "OK <bits> [t<n>=<ms left>] up=<s> reset=<cause>"
+ *   version              "OK relay04 <version> <board> <relays>"
+ *   boot                 restarts into the bootloader for a firmware update
+ * Prints "READY relay04 <version> <board> <relays> reset=<cause>" at start; all relays start off. */
 
-#include "stm8s.h"
+#include "board.h"
 
-#define VERSION "1.0.0"
-#define NRELAYS 4
+#define VERSION "1.1.0"
 #define MAX_PULSE_MS 86400000UL
 
 static volatile uint32_t ticks;
@@ -50,11 +51,7 @@ static uint32_t now(void)
 
 static void apply(void)
 {
-    PA_ODR = (uint8_t)((PA_ODR & ~0x0E) | (state & 0x07) << 1);
-    if (state & 0x08)
-        PC_ODR |= 0x08;
-    else
-        PC_ODR &= (uint8_t)~0x08;
+    relay_pins_write(state);
 }
 
 static void putch(char c)
@@ -109,12 +106,18 @@ static uint8_t equal(const char *a, const char *b)
     return *a == *b;
 }
 
-/* "all", or relay numbers 1-4, optionally separated by spaces or commas; 0 if invalid. */
+static void put_id(void)
+{
+    puts_("relay04 " VERSION " " BOARD_NAME " ");
+    putu(NRELAYS);
+}
+
+/* "all", or relay numbers 1..NRELAYS, optionally separated by spaces or commas; 0 if invalid. */
 static uint8_t parse_relays(const char *p)
 {
     uint8_t mask = 0;
     if (equal(p, "all"))
-        return (1 << NRELAYS) - 1;
+        return (uint8_t)((1u << NRELAYS) - 1);
     for (; *p; p++) {
         if (*p >= '1' && *p < '1' + NRELAYS)
             mask |= (uint8_t)(1 << (*p - '1'));
@@ -209,7 +212,7 @@ static void cmd_set(const char *bits)
             return;
         }
     }
-    error("usage: set <4 x 0|1, relay 1 first>");
+    error("usage: set <one 0|1 per relay, relay 1 first>");
 }
 
 static void handle(char *cmd)
@@ -242,7 +245,9 @@ static void handle(char *cmd)
     } else if (equal(cmd, "status")) {
         cmd_status();
     } else if (equal(cmd, "version")) {
-        puts_("OK relay04 " VERSION "\r\n");
+        puts_("OK ");
+        put_id();
+        puts_("\r\n");
     } else if (equal(cmd, "boot")) {
         state = pulsing = 0;
         apply();
@@ -311,11 +316,7 @@ void main(void)
     IWDG_RLR = 0xFF;
     IWDG_KR = 0xAA;
 
-    apply();
-    PA_CR1 |= 0x0E;
-    PA_DDR |= 0x0E;
-    PC_CR1 |= 0x08;
-    PC_DDR |= 0x08;
+    relay_pins_init();
 
     TIM4_PSCR = 7; /* 125 kHz */
     TIM4_ARR = 124; /* 1 ms */
@@ -325,7 +326,9 @@ void main(void)
     clock_and_uart_init(CR2_RIEN | CR2_TEN | CR2_REN);
     __asm__("rim");
 
-    puts_("READY relay04 " VERSION " reset=");
+    puts_("READY ");
+    put_id();
+    puts_(" reset=");
     puts_(reset_cause);
     puts_("\r\n");
 

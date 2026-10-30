@@ -6,6 +6,12 @@
 
 #define REG(addr) (*(volatile uint8_t *)(addr))
 
+/* GPIO port base = ODR; IDR, DDR, CR1 follow at +1, +2, +3. */
+#define PORT_A 0x5000u
+#define PORT_B 0x5005u
+#define PORT_C 0x500Au
+#define PORT_D 0x500Fu
+
 #define PA_ODR REG(0x5000)
 #define PA_DDR REG(0x5002)
 #define PA_CR1 REG(0x5003)

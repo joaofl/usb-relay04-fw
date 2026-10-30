@@ -41,20 +41,38 @@ protection, which erases the chip: the factory firmware cannot be restored.
 The relays need the 5 V from the card's USB port; the card has no other power
 input.
 
+### Other boards
+
+The same family has a 2-relay (ICSE013A) and an 8-relay (ICSE014A) card.
+The firmware supports 1 to 8 relays: each board is a pin table in
+[firmware/boards/](firmware/boards/), and only `icse012a` is mapped and tested.
+
+To add a board, find which pin drives each relay (for example with the
+wiring test below, or by driving pins one by one over SWIM), then create
+`firmware/boards/<name>.h`:
+
+```c
+#define BOARD_NAME "icse014a"
+#define RELAY_PINS { PIN(A, 1), PIN(A, 2), /* ... relay 1 first */ }
+```
+
+and build with `make BOARD=<name>`. Pins must leave PD1 (SWIM) and PD5/PD6
+(UART) free. A pin driven high must switch its relay on.
+
 ## Protocol
 
 Serial, 115200 8N1, one command per line (`\r`, `\n` or both). Every command
-gets one reply line starting with `OK` or `ERR`. States are four characters,
-relay 1 first, `1` = on.
+gets one reply line starting with `OK` or `ERR`. A state is one character per
+relay, relay 1 first, `1` = on. The examples are for a 4-relay board.
 
 | Command | Reply |
 |---|---|
 | `on 1 3`, `on 13`, `on all` | `OK 1010` |
 | `off 1`, `off all` | `OK 0010` |
-| `set 0101` | `OK 0101`, sets all four at once |
+| `set 0101` | `OK 0101`, sets all relays at once |
 | `pulse 1 10s`, `pulse 2 4 1500ms` | `OK 1000`; when each relay goes off again: `DONE 1 0000` |
 | `status` | `OK 1000 t1=9862 up=14 reset=power` |
-| `version` | `OK relay04 1.0.0` |
+| `version` | `OK relay04 1.1.0 icse012a 4`: firmware version, board, number of relays |
 | `boot` | `OK boot`, switches all relays off and starts the bootloader |
 
 - `t<n>=` is the time left on a running pulse, in ms. `up=` is seconds since
@@ -63,7 +81,7 @@ relay 1 first, `1` = on.
 - Pulses run up to 24 h. `on`, `off` and `set` cancel a pulse on the relays
   they touch.
 - At start all relays are off, and the card prints
-  `READY relay04 1.0.0 reset=<cause>`.
+  `READY relay04 1.1.0 icse012a 4 reset=<cause>`.
 - An independent watchdog (about 0.5 s) restarts the firmware if it hangs;
   the relays then come back off.
 
@@ -98,10 +116,11 @@ Needs `make`, Python 3 and [SDCC](https://sdcc.sourceforge.net/) 4.2 or newer
 with the stm8 port (Debian/Ubuntu: `apt install sdcc`).
 
 ```sh
-make
+make                 # BOARD=icse012a by default
+make boards          # list the boards
 ```
 
-Outputs in `build/`:
+Outputs in `build/<board>/`:
 
 | File | Use |
 |---|---|
@@ -109,9 +128,11 @@ Outputs in `build/`:
 | `relay04.ihx` | firmware only, updates over USB |
 | `boot.ihx` | bootloader only |
 
-`make build/relaytest.ihx` builds [firmware/relaytest.c](firmware/relaytest.c),
-which switches the relays on one after the other and prints `R1`..`R4`, for
-checking a card's wiring. It has no bootloader.
+`make swim-flash-relaytest` builds and flashes
+[firmware/relaytest.c](firmware/relaytest.c), which switches the board's
+relays on one after the other and prints `R1`, `R2`, ... at 115200, for
+checking a card's wiring. It has no bootloader; `make swim-flash` puts the
+relay firmware back.
 
 ## First install over SWIM
 
@@ -162,13 +183,15 @@ The card has a 4-pin programming header: 3V3, SW, RE, GND.
 
 ```sh
 make
-tools/swim-flash.py --port /dev/ttyACM0 --unprotect build/relay04-full.ihx   # card with factory firmware
+tools/swim-flash.py --port /dev/ttyACM0 --unprotect build/icse012a/relay04-full.ihx   # card with factory firmware
 make swim-flash PORT=/dev/ttyACM0                                           # card already running this firmware
 ```
 
-`swim-flash.py` removes read-out protection with `--unprotect` (mass erase),
-restores the option bytes to their defaults when they are invalid, programs
-only the bytes that differ, verifies, and starts the firmware.
+`swim-flash.py` resets and halts the chip (retrying, since the first SWIM
+write occasionally NACKs), removes read-out protection with `--unprotect`
+(mass erase), restores the option bytes to their defaults when they are
+invalid, programs only the bytes that differ, verifies, and starts the
+firmware.
 
 Disconnect the probe afterwards: while it is attached, every reset of the chip
 leaves it halted.

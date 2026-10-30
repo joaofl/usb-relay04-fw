@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Talk to a USB-RELAY04 running relay04 firmware, and update that firmware over USB.
+"""Talk to a relay card running relay04 firmware, and update that firmware over USB.
 
     relayctl.py [-d DEV] status | version | on 1 3 | off all | set 1010
     relayctl.py [-d DEV] pulse 1 10s [--wait]
-    relayctl.py [-d DEV] update build/relay04.ihx
+    relayctl.py [-d DEV] update build/icse012a/relay04.ihx
 """
 
 import argparse
@@ -145,8 +145,10 @@ def main():
     reply = relay.cmd(text)
     if a.command == "pulse" and a.wait and reply.startswith("OK"):
         print(reply)
-        relays = set(a.args[:-1]) if a.args[0] != "all" else {"1", "2", "3", "4"}
-        relays = {c for r in relays for c in r if c.isdigit()}
+        if a.args[0] == "all":
+            relays = {str(n) for n in range(1, len(reply.split()[1]) + 1)}
+        else:
+            relays = {c for r in a.args[:-1] for c in r if c.isdigit()}
         while relays:
             notice = relay.line(timeout=None)
             if notice.startswith("DONE"):
