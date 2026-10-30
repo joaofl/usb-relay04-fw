@@ -69,6 +69,22 @@ def program(probe, image):
         raise ProtocolError("verify failed")
 
 
+def attach(probe, attempts=10):
+    """Reset, enter SWIM and stall the CPU. The first write after entry NACKs now and then; retry."""
+    for attempt in range(1, attempts + 1):
+        try:
+            probe.reset_target()
+            time.sleep(0.05)
+            probe.enter_swim()
+            write_u8(probe, DM_CSR2, read_u8(probe, DM_CSR2) | DM_CSR2_STALL)
+            return
+        except ProtocolError as exc:
+            if attempt == attempts:
+                raise
+            print(f"attach attempt {attempt} failed ({exc}), retrying", file=sys.stderr)
+            time.sleep(0.5)
+
+
 def reset_and_run(probe):
     """A reset under SWIM leaves the CPU stalled in the debug module; release it."""
     probe.reset_target()
@@ -88,7 +104,7 @@ def main():
     try:
         image = image_for_range(load_ihex(a.image), FLASH_START, FLASH_SIZE, fill=0x00)
         with open_probe(a) as probe:
-            probe.enter_swim()
+            attach(probe)
             if a.unprotect:
                 unprotect(probe)
             restore_options(probe)
