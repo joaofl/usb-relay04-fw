@@ -1,5 +1,7 @@
 # usb-relay04-fw
 
+[![build](https://github.com/joaofl/usb-relay04-fw/actions/workflows/build.yml/badge.svg)](https://github.com/joaofl/usb-relay04-fw/actions/workflows/build.yml)
+
 Open-source replacement firmware for the cheap **USB-RELAY04** 4-channel USB
 relay card (sold by Seeit, and as ICStation ICSE012A): a plain text protocol
 with state readback, timed pulses, a watchdog, and a bootloader for firmware
@@ -110,6 +112,25 @@ bootloader's vector table, which forwards each one to the firmware's table at
 `0x8800`. In the bootloader the card answers `version`, `read <aaaa>`,
 `write <aaaa> <64 bytes hex>` and `run`, at the same baud rate.
 
+## Download
+
+Each [release](https://github.com/joaofl/usb-relay04-fw/releases) has
+prebuilt files for every board:
+
+| File | Use |
+|---|---|
+| `relay04-<version>-<board>-full.ihx` | bootloader + firmware, first install over SWIM |
+| `relay04-<version>-<board>.ihx` | firmware only, updates over USB |
+| `relaytest-<version>-<board>.ihx` | wiring test, over SWIM |
+| `relayctl.py` | host tool, needs only `pyserial` |
+| `SHA256SUMS` | checksums of the files above |
+
+A card already running this firmware updates with just the release files:
+
+```sh
+python3 relayctl.py -d /dev/ttyUSB0 update relay04-<version>-icse012a.ihx
+```
+
 ## Build
 
 Needs `make`, Python 3 and [SDCC](https://sdcc.sourceforge.net/) 4.2 or newer
@@ -133,6 +154,20 @@ Outputs in `build/<board>/`:
 relays on one after the other and prints `R1`, `R2`, ... at 115200, for
 checking a card's wiring. It has no bootloader; `make swim-flash` puts the
 relay firmware back.
+
+`make dist` builds every board into `dist/` with the release file names.
+
+### Releases
+
+[.github/workflows/build.yml](.github/workflows/build.yml) runs `make dist`
+on every push and pull request and keeps the files as a workflow artifact.
+Pushing a tag `v<version>` also publishes a GitHub release with those files.
+The tag must match `VERSION` in [firmware/relay04.c](firmware/relay04.c):
+
+```sh
+make -s version      # 1.1.0
+git tag v1.1.0 && git push origin v1.1.0
+```
 
 ## First install over SWIM
 
@@ -186,6 +221,10 @@ make
 tools/swim-flash.py --port /dev/ttyACM0 --unprotect build/icse012a/relay04-full.ihx   # card with factory firmware
 make swim-flash PORT=/dev/ttyACM0                                           # card already running this firmware
 ```
+
+`tools/swim-flash.py` takes any `.ihx`, including a release's
+`relay04-<version>-<board>-full.ihx`. It needs the repository with its
+submodule; it is not a standalone release file.
 
 `swim-flash.py` resets and halts the chip (retrying, since the first SWIM
 write occasionally NACKs), removes read-out protection with `--unprotect`
