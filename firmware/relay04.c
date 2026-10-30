@@ -6,11 +6,13 @@
  *   status               "OK <bits> [t<n>=<ms left>] up=<s> reset=<cause>"
  *   version              "OK relay04 <version> <board> <relays>"
  *   boot                 restarts into the bootloader for a firmware update
- * Prints "READY relay04 <version> <board> <relays> reset=<cause>" at start; all relays start off. */
+ *   h, help, ?           command list with examples, then "OK"
+ * Prints "READY relay04 <version> <board> <relays> reset=<cause>" at start; all relays start off.
+ * Input is echoed like a terminal: replies and notices start on a line of their own. */
 
 #include "board.h"
 
-#define VERSION "1.1.0"
+#define VERSION "1.2.0"
 #define MAX_PULSE_MS 86400000UL
 
 static volatile uint32_t ticks;
@@ -19,6 +21,7 @@ static volatile uint8_t rx_head, rx_tail;
 
 static char line[48];
 static uint8_t line_len;
+static uint8_t after_cr;
 static uint8_t state;     /* bit n = relay n+1 on */
 static uint8_t pulsing;   /* relays with a pulse running */
 static uint32_t pulse_end[NRELAYS];
@@ -110,6 +113,25 @@ static void put_id(void)
 {
     puts_("relay04 " VERSION " " BOARD_NAME " ");
     putu(NRELAYS);
+}
+
+static void cmd_help(void)
+{
+    puts_("relays: 1-");
+    putu(NRELAYS);
+    puts_(" or all; states: one digit per relay, relay 1 first, 1 = on\r\n"
+          "  on 1 2         switch relays 1 and 2 on\r\n"
+          "  off all        switch every relay off\r\n"
+          "  set ");
+    for (uint8_t i = 0; i < NRELAYS; i++)
+        putch(i & 1 ? '1' : '0');
+    puts_("       set every relay at once\r\n"
+          "  pulse 1 10s    relay 1 on for 10 s, then \"DONE 1 <state>\"\r\n"
+          "  pulse 2 500ms  same in ms, up to 24h\r\n"
+          "  status         state, ms left on pulses, uptime, reset cause\r\n"
+          "  version        firmware, board, number of relays\r\n"
+          "  boot           start the bootloader, for a firmware update\r\n"
+          "OK\r\n");
 }
 
 /* "all", or relay numbers 1..NRELAYS, optionally separated by spaces or commas; 0 if invalid. */
@@ -244,6 +266,8 @@ static void handle(char *cmd)
         cmd_pulse(args);
     } else if (equal(cmd, "status")) {
         cmd_status();
+    } else if (equal(cmd, "h") || equal(cmd, "help") || equal(cmd, "?")) {
+        cmd_help();
     } else if (equal(cmd, "version")) {
         puts_("OK ");
         put_id();
@@ -262,7 +286,7 @@ static void handle(char *cmd)
         TIM4_ARR = BOOT_REQUEST;
         __asm__("ldw x, #0x03ff\n ldw sp, x\n jp 0x8000");
     } else {
-        error("commands: on, off, set, pulse, status, version, boot");
+        error("unknown command, h for help");
     }
 }
 
@@ -275,11 +299,15 @@ static void finish_pulses(void)
             pulsing &= (uint8_t)~bit;
             state &= (uint8_t)~bit;
             apply();
+            if (line_len)
+                puts_("\r\n");
             puts_("DONE ");
             putch((char)('1' + i));
             putch(' ');
             put_state();
             puts_("\r\n");
+            for (uint8_t j = 0; j < line_len; j++)
+                putch(line[j]);
         }
     }
 }
@@ -289,14 +317,30 @@ static void poll_rx(void)
     while (rx_tail != rx_head) {
         char c = rx[rx_tail];
         rx_tail = (rx_tail + 1) & (sizeof(rx) - 1);
+        /* "\r\n" from a program is one line end, not an extra empty line */
+        uint8_t lf_after_cr = c == '\n' && after_cr;
+        after_cr = c == '\r';
+        if (lf_after_cr)
+            continue;
         if (c == '\r' || c == '\n') {
+            puts_("\r\n");
             while (line_len && line[line_len - 1] == ' ')
                 line_len--;
             line[line_len] = 0;
-            if (line_len)
-                handle(line);
+            uint8_t len = line_len;
             line_len = 0;
-        } else if (line_len < sizeof(line) - 1) {
+            if (len)
+                handle(line);
+        } else if (c == '\b' || c == 0x7F) {
+            if (line_len) {
+                line_len--;
+                puts_("\b \b");
+            }
+        } else if (c == 0x03) {
+            line_len = 0;
+            puts_("^C\r\n");
+        } else if (c >= ' ' && c <= '~' && line_len < sizeof(line) - 1) {
+            putch(c);
             line[line_len++] = c >= 'A' && c <= 'Z' ? c + 32 : c;
         }
     }

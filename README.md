@@ -74,7 +74,8 @@ relay, relay 1 first, `1` = on. The examples are for a 4-relay board.
 | `set 0101` | `OK 0101`, sets all relays at once |
 | `pulse 1 10s`, `pulse 2 4 1500ms` | `OK 1000`; when each relay goes off again: `DONE 1 0000` |
 | `status` | `OK 1000 t1=9862 up=14 reset=power` |
-| `version` | `OK relay04 1.1.0 icse012a 4`: firmware version, board, number of relays |
+| `version` | `OK relay04 1.2.0 icse012a 4`: firmware version, board, number of relays |
+| `h`, `help`, `?` | the commands with short examples, then `OK` |
 | `boot` | `OK boot`, switches all relays off and starts the bootloader |
 
 - `t<n>=` is the time left on a running pulse, in ms. `up=` is seconds since
@@ -83,7 +84,13 @@ relay, relay 1 first, `1` = on. The examples are for a 4-relay board.
 - Pulses run up to 24 h. `on`, `off` and `set` cancel a pulse on the relays
   they touch.
 - At start all relays are off, and the card prints
-  `READY relay04 1.1.0 icse012a 4 reset=<cause>`.
+  `READY relay04 1.2.0 icse012a 4 reset=<cause>`.
+- The card echoes what you type, so a serial terminal (`tio`, `picocom`,
+  `screen`) works without local echo. Backspace deletes, Ctrl-C drops the
+  line. A `DONE` notice that arrives mid-line is printed on its own line, and
+  the half-typed command is printed again after it.
+- Programs see their command echoed back as a line of its own before the
+  reply; `\r\n` counts as one line end.
 - An independent watchdog (about 0.5 s) restarts the firmware if it hangs;
   the relays then come back off.
 
@@ -95,7 +102,10 @@ relay, relay 1 first, `1` = on. The examples are for a 4-relay board.
 tools/relayctl.py -d /dev/ttyUSB0 status
 tools/relayctl.py -d /dev/ttyUSB0 on 1 3
 tools/relayctl.py -d /dev/ttyUSB0 pulse 1 10s --wait   # returns after DONE
+tools/relayctl.py -d /dev/ttyUSB0 h
 ```
+
+Or interactively: `tio -b 115200 /dev/ttyUSB0`, then type `h`.
 
 The default device is `/dev/ttyUSB0`.
 
@@ -165,8 +175,8 @@ Pushing a tag `v<version>` also publishes a GitHub release with those files.
 The tag must match `VERSION` in [firmware/relay04.c](firmware/relay04.c):
 
 ```sh
-make -s version      # 1.1.0
-git tag v1.1.0 && git push origin v1.1.0
+make -s version      # 1.2.0
+git tag v1.2.0 && git push origin v1.2.0
 ```
 
 ## First install over SWIM

@@ -62,16 +62,20 @@ class Relay:
             raw = self.port.readline()
         finally:
             self.port.timeout = old
-        return raw.decode(errors="replace").strip()
+        return raw.decode(errors="replace").rstrip()
 
-    def cmd(self, text, timeout=None):
-        """Send one command; return its OK/ERR reply, skipping READY/BOOT/DONE notices."""
+    def cmd(self, text, timeout=None, body=None):
+        """Send one command; return its OK/ERR reply. The firmware echoes the command line,
+        and READY/BOOT/DONE notices can arrive in between; lines before the reply go to body."""
         self.port.write(text.encode() + b"\r\n")
         deadline = time.monotonic() + (timeout or self.port.timeout)
+        echo = text.lower()
         while time.monotonic() < deadline:
             reply = self.line()
             if reply.startswith(("OK", "ERR")):
                 return reply
+            if body is not None and reply and reply.lower() != echo:
+                body.append(reply)
         raise TimeoutError(f"no reply to {text!r}")
 
 
@@ -142,6 +146,11 @@ def main():
     if a.command == "update":
         return cmd_update(relay, a.args[0])
     text = " ".join([a.command] + a.args)
+    if a.command in ("h", "help", "?"):
+        body = []
+        reply = relay.cmd(text, body=body)
+        print("\n".join(body))
+        return check(reply)
     reply = relay.cmd(text)
     if a.command == "pulse" and a.wait and reply.startswith("OK"):
         print(reply)
