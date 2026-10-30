@@ -1,0 +1,3 @@
+[submodule "tools/rp2040swim"]
+	path = tools/rp2040swim
+	url = https://github.com/ARDev1161/rp2040swim.git
